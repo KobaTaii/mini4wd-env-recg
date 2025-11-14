@@ -643,3 +643,44 @@ class TempGraph extends Graph {
     text(range_H, graph_x+width_graph-50, graph_y+height_graph+15);
   }
 }
+
+class SlipGraph extends Graph {
+  SlipGraph(int x_, int y_, int wd_graph, int he_graph, int v_div_num, int h_div_num, color col, String na_graph, ControlP5 contp5) {
+    super(x_, y_, wd_graph, he_graph, v_div_num, h_div_num, col, na_graph, contp5);
+    setEnValsVisible(true, false, false); // X軸 (valsX) のみ使用
+  }
+
+  void customPart() {
+    fill(255, 255, 255, 255);
+    textSize(15);
+    // Y軸の目盛り (0.0 ～ 5.0 を想定)
+    text("  5.0", super.graph_x+super.width_graph, super.graph_y                       );
+    text("  2.5", super.graph_x+super.width_graph, super.graph_y+super.height_graph/4  );
+    text("  0.0", super.graph_x+super.width_graph, super.graph_y+super.height_graph/2  );
+    text(" -2.5", super.graph_x+super.width_graph, super.graph_y+super.height_graph*3/4); // 正規化のため負も定義
+    text(" -5.0", super.graph_x+super.width_graph, super.graph_y+super.height_graph    );
+
+    writeGraphVal("Slip Magnitude", slipMagnitude); // メインスケッチのグローバル変数 slipMagnitude を表示
+  }
+
+  /**
+   * グラフ値をグラフの上に描画
+   */
+  void writeGraphVal(String name, float X_val) {
+    textSize(20);
+    fill(255, 255, 255, 255);
+    text(name, graph_x, graph_y-4);
+
+    fill(255, 0, 0, 200);
+    text("■", graph_x+200, graph_y-8);
+
+    fill(255, 255, 255, 255);
+    text("Mag:", graph_x+220, graph_y-4);
+
+    text(X_val, graph_x+300, graph_y-4);
+
+    textSize(15);
+    text(range_L, graph_x, graph_y+height_graph+15);
+    text(range_H, graph_x+width_graph-50, graph_y+height_graph+15);
+  }
+}

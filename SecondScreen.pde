@@ -5,6 +5,37 @@ import controlP5.*;
 
 public class SecondApplet extends PApplet {
 
+  // ---スリップ判定しきい値 ---
+  
+  /** * 要件1: 急激な加速度低下のしきい値 (G) 
+   * 1サイクルでこれ以上Gが低下したらスリップとみなす
+   */
+  final float SLIP_ACC_DROP_THRESHOLD = 1.2; // 0.5から引き上げ（より鈍感に）
+
+  /** * 要件2: 急激な電圧上昇のしきい値 (V) 
+   * 1サイクルでこれ以上電圧が上昇したらスリップとみなす
+   */
+  final float SLIP_VOLTAGE_SPIKE_THRESHOLD = 0.3; // 0.1から引き上げ（より鈍感に）
+
+  /** * 要件3: 空転判定用のDutyしきい値 (%) 
+   * これ以上のDutyで走行中に判定
+   */
+  final float DUTY_RUNNING_THRESHOLD = 30.0; // 変更なし
+
+  /** * 要件3(新): 空転判定用の「低負荷」電圧しきい値 (V) 
+   * これより電圧が高い場合、負荷が低い（空転の可能性）とみなす
+   * ※この 3.0 V という値は、実際の走行データを見て調整が必要です
+   */
+  final float AERIAL_SPIN_VOLTAGE_THRESHOLD = 2.85; 
+
+  /** * 要件3(新): 空転判定用の加速度しきい値 (G) 
+   * 加速中(>1.15Gなど)でないことを確認
+   * (静止時や等速走行時は 1.0G に近くなるため)
+   */
+  // (空中空転の振動を許容するため、しきい値を引き上げ)
+  final float AERIAL_SPIN_ACC_NORM_THRESHOLD = 1.5;
+  
+  
   PApplet parent; // 1. メインスケッチ(parent)を保存する変数を追加
 
   Serial port;
@@ -164,6 +195,16 @@ public class SecondApplet extends PApplet {
   {
     // 11. メインスケッチの変数にアクセス
     sketch_RT_AICHIP_logger mainSketch = (sketch_RT_AICHIP_logger) parent;
+    
+    // ---Nullチェックガード ---
+    // port が null (切断後など) または mta2 や slip_graph が未初期化の場合、
+    // NullPointerException を避けるために処理を中断する
+    if (port == null || mta2 == null || mainSketch == null || 
+        mainSketch.gyro_graph == null || // 他のグラフも念のためチェック
+        mainSketch.acc_graph == null ||
+        mainSketch.slip_graph == null) {
+      return; // 処理を安全に中断
+    }
 
     String str = "d" ;
     if (port.available() != 0)
@@ -224,8 +265,63 @@ public class SecondApplet extends PApplet {
       mainSketch.voltage_graph.addPoint(mainSketch.V_Lipo/5.0, mainSketch.V_Battery/5.0);
       mainSketch.acc_norm = sqrt(mainSketch.acc_vec[0]*mainSketch.acc_vec[0]+mainSketch.acc_vec[1]*mainSketch.acc_vec[1]+mainSketch.acc_vec[2]*mainSketch.acc_vec[2]);
       mainSketch.mag_norm = sqrt(mainSketch.mag_vec[0]*mainSketch.mag_vec[0]+mainSketch.mag_vec[1]*mainSketch.mag_vec[1]+mainSketch.mag_vec[2]*mainSketch.mag_vec[2]);
+      if (mainSketch.duty > DUTY_RUNNING_THRESHOLD) {
+        // mta1 (SecondScreenのコンソール) に出力
+        mta1.println("DEBUG: V_Battery=" + nf(mainSketch.V_Battery, 1, 2) + 
+                     " | acc_norm=" + nf(mainSketch.acc_norm, 1, 2) );
+      }
     }
+    // --- ここから更新：スリップ検出ロジック (V2) ---
+      
+      // 1. 1サイクル前との差分を計算
+      float delta_acc = mainSketch.acc_norm - mainSketch.prev_acc_norm;
+      float delta_v = mainSketch.V_Battery - mainSketch.prev_V_Battery;
 
+      // 2. 3つの要件を判定
+      
+      // 要件1: 走行中に加速度"ノルム"が急激に低下した (スリップ開始など)
+      boolean condition1 = (mainSketch.duty > DUTY_RUNNING_THRESHOLD) && 
+                           (delta_acc < -SLIP_ACC_DROP_THRESHOLD);
+                           
+      // 要件2: 走行中に電圧が急激に上昇した (負荷が抜けた)
+      boolean condition2 = (mainSketch.duty > DUTY_RUNNING_THRESHOLD) && 
+                           (delta_v > SLIP_VOLTAGE_SPIKE_THRESHOLD);
+                           
+      // 要件3: 高Duty & 高電圧(低負荷) & 加速していない (空中空転など)
+      //        (V_Battery が高い = モーター負荷が低い)
+      //        (acc_norm が 1.0G に近い = 加速Gが乗っていない)
+      boolean condition3 = (mainSketch.duty > DUTY_RUNNING_THRESHOLD) && 
+                           (mainSketch.V_Battery > AERIAL_SPIN_VOLTAGE_THRESHOLD) &&
+                           (mainSketch.acc_norm < AERIAL_SPIN_ACC_NORM_THRESHOLD); 
+
+      // 3. スリップ状態と「大きさ」を更新
+      if (condition1 || condition2 || condition3) {
+        mainSketch.isSlipping = true;
+        
+        // スリップ量の「大きさ」を推定 (各要因の最大値をとる)
+        float mag1 = (condition1) ? abs(delta_acc) : 0;
+        float mag2 = (condition2) ? delta_v * 5.0 : 0;  // 電圧上昇量 (スケーリング)
+        // 要件3の「大きさ」を電圧の超過分で表現
+        float mag3 = (condition3) ? (mainSketch.V_Battery - AERIAL_SPIN_VOLTAGE_THRESHOLD) : 0; 
+        
+        mainSketch.slipMagnitude = max(mag1, mag2, mag3);
+        
+        // コンソールにスリップを通知 (前回と同じ)
+        mta1.println("SLIP DETECTED! (Mag: " + nf(mainSketch.slipMagnitude, 1, 2) + ")");
+
+      } else {
+        mainSketch.isSlipping = false;
+        mainSketch.slipMagnitude = 0.0;
+      }
+
+      // 4. 現在の値を「1サイクル前の値」として保存 (前回と同じ)
+      mainSketch.prev_acc_norm = mainSketch.acc_norm;
+      mainSketch.prev_V_Battery = mainSketch.V_Battery;
+      
+      // スリップの大きさをグラフに追加 (5.0を最大として正規化)
+      mainSketch.slip_graph.addPoint( mainSketch.slipMagnitude / 5.0 );
+
+      
     // ★ 7. メインスケッチのCSV書き込み関数を呼び出す
     mainSketch.writeCsvData();
   }
@@ -261,6 +357,8 @@ public class SecondApplet extends PApplet {
       mainSketch.voltage_graph.range_H -= 0.05;
       mainSketch.temp_graph.range_L -= 0.05;
       mainSketch.temp_graph.range_H -= 0.05;
+      mainSketch.slip_graph.range_L -= 0.05; // ← これを追加
+      mainSketch.slip_graph.range_H -= 0.05; // ← これを追加
     }
 
     if (keyCode == RIGHT) {
@@ -282,6 +380,8 @@ public class SecondApplet extends PApplet {
       mainSketch.voltage_graph.range_H += 0.05;
       mainSketch.temp_graph.range_L += 0.05;
       mainSketch.temp_graph.range_H += 0.05;
+      mainSketch.slip_graph.range_L += 0.05; // ← これを追加
+      mainSketch.slip_graph.range_H += 0.05; // ← これを追加
     }
   }
 }

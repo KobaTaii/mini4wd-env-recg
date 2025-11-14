@@ -42,6 +42,7 @@ DegGraph     deg_graph;
 DutyGraph    duty_graph;
 VoltageGraph voltage_graph;
 TempGraph    temp_graph;
+SlipGraph slip_graph; // ← これを追加
 //受信データ
 float   temperature       = 0.0;                       //センサ温度[度C]
 float[] omega_vec         = {0.0, 0.0, 0.0};           //角速度ベクトル (x,y,z)[rad]
@@ -61,6 +62,12 @@ int     isSlope           = 0;
 float  V_Lipo    = 0.0;
 float  V_Battery = 0.0;
 
+// スリップ判定用グローバル変数 ---
+float prev_acc_norm = 0.0;     // 1サイクル前の加速度ノルム
+float prev_V_Battery = 0.0;    // 1サイクル前のバッテリー電圧
+boolean isSlipping = false;    // スリップ状態 (true: スリップ中)
+float slipMagnitude = 0.0;   // スリップ量の大きさ（推定値）
+
 
 ///////////////////////////////
 //グラフ表示frameで使われる変数
@@ -73,7 +80,7 @@ int pre_mouseY = 0;
 float ctrl_scale =1.0;//マウスホイールの回転に対応した画面の表示倍率
 
 float scale_change;  //ディスプレイサイズに収まるように調整するための表示倍率
-int default_width  = 1360;
+int default_width  = 2050;
 int default_height = 1000;
 
 /**
@@ -123,7 +130,7 @@ void setup()
   csvWriter = createWriter("data_log.csv"); 
   
   // ★ 4. CSVファイルの1行目にヘッダーを書き込む
-  csvWriter.println("timestamp_ms,accX,accY,accZ,omegaX,omegaY,omegaZ,magX,magY,magZ,temp,deg,duty,isStop,isCurve,isSlope,V_Lipo,V_Battery");
+  csvWriter.println("timestamp_ms,accX,accY,accZ,omegaX,omegaY,omegaZ,magX,magY,magZ,temp,deg,duty,isStop,isCurve,isSlope,V_Lipo,V_Battery,isSlipping, slipMagnitude");
   
   //ボタン等のUIを使用するためのクラス
   ControlP5 cp5 = new ControlP5(this);
@@ -144,6 +151,7 @@ void setup()
   state_graph    =  new   StateGraph(700, 775, 600, 200, 30,  7, color(200,0,255,75)    ,"state"   , cp5);
   voltage_graph  =  new VoltageGraph(30 , 775, 600, 200, 30,  8, color(200,200,255,75)  ,"voltage" , cp5);
   temp_graph     =  new    TempGraph(700,  25, 600, 200, 30,  8, color(200,200,255,75)  ,"temp"    , cp5);
+  slip_graph     =  new SlipGraph(1370, 775, 600, 200, 30, 7, color(200, 100, 100, 50), "Slip", cp5);
 
 
 }
@@ -190,6 +198,7 @@ void draw()
   duty_graph.drawGraph();
   voltage_graph.drawGraph();
   temp_graph.drawGraph();
+  slip_graph.drawGraph();
 
   //別frameの描画
   // f.s.redraw(); // ← この行をコメントアウト、または削除します
@@ -293,7 +302,9 @@ void writeCsvData() {
       str(isCurve),       //
       str(isSlope),       //
       str(V_Lipo),        // 電圧
-      str(V_Battery)      //
+      str(V_Battery),     //
+      str(isSlipping),    // スリップ判定
+      str(slipMagnitude)  //
     };
     
     // データをカンマ(,)で連結して1行の文字列にする
