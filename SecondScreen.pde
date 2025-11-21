@@ -15,7 +15,7 @@ public class SecondApplet extends PApplet {
   /** * 要件2: 急激な電圧上昇のしきい値 (V) 
    * 1サイクルでこれ以上電圧が上昇したらスリップとみなす
    */
-  final float SLIP_VOLTAGE_SPIKE_THRESHOLD = 0.3; // 0.1から引き上げ（より鈍感に）
+  final float SLIP_VOLTAGE_SPIKE_THRESHOLD = 0.2; // 0.1から引き上げ（より鈍感に）
 
   /** * 要件3: 空転判定用のDutyしきい値 (%) 
    * これ以上のDutyで走行中に判定
